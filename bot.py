@@ -100,6 +100,54 @@ def _pick_steam_server(servers: list[dict], address: str) -> dict | None:
     return rust[0]
 
 
+# Кэш списка игроков по адресу: "ip:port" -> (timestamp, список), живёт 60 сек.
+# Нужен, чтобы кнопки ◀ ▶ листали без повторного запроса к серверу.
+_PLAYERS_CACHE: dict = {}
+_PLAYERS_CACHE_TTL = 60
+
+PAGE_SIZE = 5
+
+
+async def _fetch_players_cached(address: str) -> list | None:
+    """Список игроков с кэшем. None — сервер не ответил на UDP."""
+    cached = _PLAYERS_CACHE.get(address)
+    if cached and time.time() - cached[0] < _PLAYERS_CACHE_TTL:
+        return cached[1]
+    loop = asyncio.get_event_loop()
+    players = await loop.run_in_executor(None, __import__("a2s_query").query_players, address)
+    if players is not None:
+        _PLAYERS_CACHE[address] = (time.time(), players)
+    return players
+
+
+def _render_players_page(players: list, page: int, address: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Страница списка игроков (PAGE_SIZE штук) + кнопки ◀ ▶."""
+    total = len(players)
+    if total == 0:
+        return f"👥 На сервере <code>{address}</code> никого нет.", None
+
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = min(max(page, 0), pages - 1)
+    start = page * PAGE_SIZE
+
+    lines = [f"👥 <b>Игроки на сервере</b> ({total}):\n"]
+    for i, p in enumerate(players[start:start + PAGE_SIZE], start + 1):
+        dur = format_duration(p.get("duration") or 0)
+        name = p.get("name") or "???"
+        lines.append(f"{i}. {name} — {dur}")
+
+    lines.append(f"\nСтр. {page + 1}/{pages}")
+
+    row = []
+    if page > 0:
+        row.append(InlineKeyboardButton("◀", callback_data=f"players|{address}|{page - 1}"))
+    if page < pages - 1:
+        row.append(InlineKeyboardButton("▶", callback_data=f"players|{address}|{page + 1}"))
+    markup = InlineKeyboardMarkup([row]) if row else None
+
+    return "\n".join(lines), markup
+
+
 async def find_server_map_url(ip: str, port: int) -> str | None:
     """Поиск ссылки на живую карту Rust-сервера (Leaf webmap и популярные порты).
     Проверяет все кандидаты параллельно, результат кэшируется на 10 минут."""
@@ -828,22 +876,19 @@ async def cmd_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     address = context.args[0]
     await update.message.chat.send_action("typing")
 
-    loop = asyncio.get_event_loop()
-    players = await loop.run_in_executor(None, __import__("a2s_query").query_players, address)
+    players = await _fetch_players_cached(address)
 
     if players is None:
-        # UDP не ответил — узнаём хотя бы статус сервера из реестра Steam
+        # UDP не ответил — показываем статус сервера из реестра Steam
         steam_servers = await steam_api.get_server_list(address)
         target = _pick_steam_server(steam_servers, address)
         if target:
-            online = target.get("players", 0)
             await update.message.reply_text(
-                f"🟢 <b>Сервер онлайн</b> — <b>{online}</b>/{target.get('max_players', 0)} игроков\n\n"
+                f"🟢 <b>Сервер онлайн</b> — <b>{target.get('players', 0)}</b>/{target.get('max_players', 0)} игроков\n\n"
                 f"📛 {target.get('name', '?')}\n"
                 f"🗺 Карта: {target.get('map', '?')}\n\n"
-                f"⚠️ Список ников недоступен: хостинг бота не пропускает UDP-запросы "
-                f"к серверу, а имена игроков Steam по HTTP не отдаёт.\n"
-                f"⚡ Статус тоже доступен: <code>/server {address}</code>",
+                f"ℹ️ Сервер не отвечает на UDP-запросы с сети хостинга — ники недоступны.\n"
+                f"⚡ Статус: <code>/server {address}</code>",
                 parse_mode="HTML",
             )
             return
@@ -853,20 +898,35 @@ async def cmd_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if not players:
-        await update.message.reply_text(f"👥 На сервере <code>{address}</code> никого нет.")
+    text, markup = _render_players_page(players, 0, address)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+# ────────────────────────────────────────────
+#  Callback: листание игроков (◀ ▶)
+# ────────────────────────────────────────────
+
+async def callback_players_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("|")
+    if len(parts) != 3:
+        await query.answer()
         return
 
-    lines = [f"👥 <b>Игроки на сервере</b> ({len(players)}):\n"]
-    for i, p in enumerate(players[:30], 1):
-        dur = format_duration(p["duration"])
-        name = p["name"] if p["name"] else "???"
-        lines.append(f"{i}. {name} — {dur}")
+    address, page_str = parts[1], parts[2]
+    page = int(page_str) if page_str.isdigit() else 0
 
-    if len(players) > 30:
-        lines.append(f"\n... и ещё {len(players) - 30} игрок(ов)")
+    players = await _fetch_players_cached(address)
+    if players is None:
+        await query.answer("Данные устарели — отправь /players заново", show_alert=True)
+        return
 
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    text, markup = _render_players_page(players, page, address)
+    await query.answer()
+    if markup is None:
+        await query.edit_message_text(text, parse_mode="HTML")
+    else:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
 # ────────────────────────────────────────────
@@ -889,6 +949,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_refresh, pattern=r"^refresh:"))
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
+    app.add_handler(CallbackQueryHandler(callback_players_page, pattern=r"^players\|"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
