@@ -2,6 +2,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import aiohttp
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -73,6 +75,26 @@ def time_ago(timestamp_str: str) -> str:
         return "н/д"
 
 
+async def find_server_map_url(ip: str, port: int) -> str | None:
+    """Поиск ссылки на живую карту Rust-сервера (Leaf webmap и популярные порты)."""
+    candidates = [
+        f"http://{ip}:8081/",          # Leaf webmap по умолчанию
+        f"http://{ip}:8080/",          # запасной
+        f"http://{ip}:{port}/",        # игровой порт (иногда там webmap)
+        f"http://{ip}:{port + 1}/",    # на один больше игрового
+        f"https://{ip}:8081/",
+    ]
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
+        for url in candidates:
+            try:
+                async with session.get(url, ssl=False, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        return url
+            except Exception:
+                continue
+    return None
+
+
 # ────────────────────────────────────────────
 #  Команда /start
 # ────────────────────────────────────────────
@@ -102,7 +124,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "❓ <b>Как пользоваться</b>\n\n"
         "🔹 <b>Профиль игрока:</b>\n"
-        "<code>/profile nickname</code> — поиск по нику (онлайн первыми)\n"
+        "<code>/profile nickname</code> — по нику (кастомная ссылка)\n"
         "<code>/profile 76561198012345678</code> — по SteamID\n"
         "<code>/profile steamcommunity.com/id/nickname</code> — по ссылке\n\n"
         "Покажет: аватар, имя, онлайн/оффлайн, часы в Rust, баны, страну.\n\n"
@@ -116,99 +138,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "battlemetrics.com/servers/rust"
     )
     await update.message.reply_text(text, parse_mode="HTML")
-
-
-# ────────────────────────────────────────────
-#  Поиск игроков по нику
-# ────────────────────────────────────────────
-
-async def _show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE, nick: str):
-    """Поиск по нику: список игроков, онлайн первыми."""
-    await update.message.chat.send_action("typing")
-
-    players = await steam_api.search_players(nick, limit=10)
-    if not players:
-        # Если поиск пуст — попробуем резолвить как кастомную ссылку (id/nick)
-        steam_id = await steam_api.resolve_vanity_url(nick)
-        if steam_id:
-            msg, reply_markup = await _build_profile_message(steam_id, nick)
-            if msg:
-                await update.message.reply_text(
-                    msg, parse_mode="HTML", reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                )
-                return
-        await update.message.reply_text(
-            f"❌ Steam не нашёл игроков с ником «{nick}».\n\n"
-            "Это может быть, если ник сменили недавно или профиль не "
-            "попал в поиск Steam.\n\n"
-            "🔥 <b>Надёжный способ:</b> пришли ссылку на свой профиль:\n"
-            "<code>/profile steamcommunity.com/id/твой_ник</code>\n"
-            "или SteamID из клиента Steam:\n"
-            "Профиль → Изменить профиль → Ссылка на аккаунт.",
-        )
-        return
-
-    # Параллельно получаем summaries, чтобы определить кто онлайн
-    steam_ids = [p["steam_id"] for p in players]
-    summaries = await asyncio.gather(
-        *(steam_api.get_player_summary(sid) for sid in steam_ids),
-        return_exceptions=True,
-    )
-
-    enriched = []
-    for p, s in zip(players, summaries):
-        online = isinstance(s, dict) and s.get("personastate", 0) > 0
-        country = (s.get("loccountrycode", "") if isinstance(s, dict) else "") or p.get("country", "")
-        enriched.append({**p, "online": online, "country": country})
-
-    # Онлайн первыми, потом оффлайн
-    enriched.sort(key=lambda x: not x["online"])
-
-    # Запоминаем результат, чтобы можно было вернуться к списку кнопкой «Назад»
-    context.user_data["last_search"] = {
-        "nick": nick,
-        "players": enriched,
-    }
-
-    msg, reply_markup = _build_search_list_message(nick, enriched)
-    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
-
-
-def _build_search_list_message(nick: str, enriched: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
-    """Собрать сообщение списка игроков + клавиатуру выбора."""
-    lines = [f"🔎 <b>Найдено по нику «{nick}»:</b>\n"]
-    keyboard_rows = []
-    for i, p in enumerate(enriched, 1):
-        dot = "🟢" if p["online"] else "🔴"
-        flag = COUNTRY_FLAGS.get(p["country"], "")
-        lines.append(f"{dot} <b>{p['name']}</b> {flag}")
-        keyboard_rows.append([
-            InlineKeyboardButton(f"{i}. {p['name']}", callback_data=f"pick:{p['steam_id']}")
-        ])
-
-    reply_markup = InlineKeyboardMarkup(keyboard_rows)
-    return "\n".join(lines), reply_markup
-
-
-COUNTRY_FLAGS = {
-    "US": "🇺🇸", "DE": "🇩🇪", "FR": "🇫🇷", "GB": "🇬🇧",
-    "RU": "🇷🇺", "NL": "🇳🇱", "AU": "🇦🇺", "SE": "🇸🇪",
-    "FI": "🇫🇮", "NO": "🇳🇴", "PL": "🇵🇱", "BR": "🇧🇷",
-    "UA": "🇺🇦", "KZ": "🇰🇿", "TR": "🇹🇷", "IL": "🇮🇱",
-    "BY": "🇧🇾", "CA": "🇨🇦", "CZ": "🇨🇿", "ES": "🇪🇸",
-    "IT": "🇮🇹", "JP": "🇯🇵", "KR": "🇰🇷", "MX": "🇲🇽",
-    "CN": "🇨🇳", "IN": "🇮🇳", "AR": "🇦🇷", "CH": "🇨🇭",
-    "AT": "🇦🇹", "BE": "🇧🇪", "BG": "🇧🇬", "HR": "🇭🇷",
-    "DK": "🇩🇰", "EE": "🇪🇪", "GR": "🇬🇷", "HU": "🇭🇺",
-    "IE": "🇮🇪", "LV": "🇱🇻", "LT": "🇱🇹", "LU": "🇱🇺",
-    "MD": "🇲🇩", "PT": "🇵🇹", "RO": "🇷🇴", "RS": "🇷🇸",
-    "SK": "🇸🇰", "SI": "🇸🇮", "ZA": "🇿🇦", "NG": "🇳🇬",
-    "EG": "🇪🇬", "AE": "🇦🇪", "SA": "🇸🇦", "IR": "🇮🇷",
-    "PK": "🇵🇰", "BD": "🇧🇩", "TH": "🇹🇭", "VN": "🇻🇳",
-    "PH": "🇵🇭", "ID": "🇮🇩", "MY": "🇲🇾", "SG": "🇸🇬",
-    "NZ": "🇳🇿", "CL": "🇨🇱", "CO": "🇨🇴", "PE": "🇵🇪",
-}
 
 
 # ────────────────────────────────────────────
@@ -228,15 +157,6 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_input = " ".join(context.args)
     await update.message.chat.send_action("typing")
-
-    # Определяем тип ввода: SteamID64 (17 цифр) или ссылка — показываем профиль напрямую
-    is_direct = user_input.isdigit() and len(user_input) == 17
-    is_url = "steamcommunity.com" in user_input
-
-    if not is_direct and not is_url:
-        # Поиск по нику: показываем список игроков (онлайн первыми)
-        await _show_search_results(update, context, user_input)
-        return
 
     steam_id = await steam_api.resolve_input_to_steam_id(user_input)
     if not steam_id:
@@ -380,62 +300,6 @@ async def _build_profile_message(steam_id: str, user_input: str) -> tuple[str | 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     return msg, reply_markup
-
-
-# ────────────────────────────────────────────
-#  Callback: Выбран игрок из списка поиска
-# ────────────────────────────────────────────
-
-async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Открываю профиль...")
-
-    data = query.data.split(":", 1)
-    steam_id = data[1] if len(data) > 1 else ""
-    if not steam_id.isdigit():
-        await query.edit_message_text("❌ Ошибка: неверный SteamID.")
-        return
-
-    try:
-        msg, reply_markup = await _build_profile_message(steam_id, steam_id)
-    except Exception as e:
-        await query.edit_message_text(f"❌ Ошибка при загрузке профиля: {e}")
-        return
-
-    if msg is None:
-        await query.edit_message_text(
-            "❌ Не удалось получить данные из Steam.\n"
-            "Возможно, SteamID неверный или профиль приватный.",
-        )
-        return
-
-    # Кнопка «Назад к списку», если открыли профиль из результатов поиска
-    if context.user_data.get("last_search"):
-        back_btn = [InlineKeyboardButton("⬅️ Назад к списку", callback_data="back_to_list")]
-        keyboard = reply_markup.inline_keyboard + [back_btn]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
-    )
-
-
-# ────────────────────────────────────────────
-#  Callback: Назад к списку поиска
-# ────────────────────────────────────────────
-
-async def callback_back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    last = context.user_data.get("last_search")
-    if not last:
-        await query.answer("Поиск устарел, попробуй /profile ник заново")
-        return
-
-    nick = last.get("nick", "")
-    players = last.get("players", [])
-    msg, reply_markup = _build_search_list_message(nick, players)
-    await query.answer("Возвращаюсь к списку")
-    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=reply_markup)
 
 
 # ────────────────────────────────────────────
@@ -866,14 +730,20 @@ async def cmd_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Ищем живую карту сервера (Leaf webmap и популярные порты)
+    ip, _, port_str = address.rpartition(":")
+    port = int(port_str) if port_str.isdigit() else 28015
+    map_url = await find_server_map_url(ip, port)
+
     msg = (
         f"🖥 <b>Сервер Rust</b>\n\n"
         f"📛 <b>{info['name']}</b>\n"
         f"🗺 Карта: {info['map']}\n"
         f"👥 Игроки: <b>{info['players']}/{info['max_players']}</b>\n"
-        f"{'🔒 VAC' if info['vac'] else ''}\n"
-        f"\n🔗 <a href=\"https://www.gametracker.com/server_info/{address}\">GameTracker</a>"
+        f"{'🔒 VAC' if info['vac'] else ''}"
     )
+    if map_url:
+        msg += f"\n\n🗺️ <a href=\"{map_url}\">Живая карта сервера</a>"
 
     await update.message.reply_text(msg, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -940,8 +810,6 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_refresh, pattern=r"^refresh:"))
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
-    app.add_handler(CallbackQueryHandler(callback_pick, pattern=r"^pick:"))
-    app.add_handler(CallbackQueryHandler(callback_back_to_list, pattern=r"^back_to_list"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
