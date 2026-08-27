@@ -139,3 +139,24 @@ async def get_recent_games(steam_id: str) -> list[dict]:
                 return []
             data = await resp.json()
             return data.get("response", {}).get("games", [])
+
+
+async def get_servers_at_address(ip: str) -> list[dict]:
+    """
+    Найти серверы, зарегистрированные на IP в мастер-сервере Steam.
+    Steam API отдаёт для игрока релейный адрес (например port 20000),
+    а реальные серверы на этом IP могут быть на других портах (20010 и т.д.).
+    Возвращает список: [{'addr': 'ip:port', 'gamedir': 'rust', ...}]
+    """
+    url = "https://api.steampowered.com/ISteamApps/GetServersAtAddress/v1/"
+    params = {
+        "key": config.STEAM_API_KEY,
+        "addr": ip,
+        "format": "json",
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            return data.get("response", {}).get("servers", [])
