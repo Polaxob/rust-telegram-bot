@@ -207,12 +207,15 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             game_text = "\n🎮 Сейчас играет"
 
-    # Последний вход — показываем только если оффлайн
+    # Последний вход
     last_seen = ""
-    if persona_state == 0 and last_logoff:
+    if last_logoff:
         dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
         ago = time_ago(dt.isoformat())
-        last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
+        if persona_state > 0:
+            last_seen = f"\n🕐 Последний раз выходил из Steam: {ago}"
+        else:
+            last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
 
     # Баны
     ban_text = ""
@@ -282,10 +285,13 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_logoff = summary.get("lastlogoff")
 
     last_seen = ""
-    if persona_state == 0 and last_logoff:
+    if last_logoff:
         dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
         ago = time_ago(dt.isoformat())
-        last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
+        if persona_state > 0:
+            last_seen = f"\n🕐 Последний раз выходил из Steam: {ago}"
+        else:
+            last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
 
     games = await steam_api.get_owned_games(steam_id)
     rust_hours = "🔒 Профиль приватный — данные скрыты"
