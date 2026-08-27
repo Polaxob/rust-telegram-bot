@@ -80,6 +80,26 @@ def time_ago(timestamp_str: str) -> str:
 _MAP_URL_CACHE: dict = {}
 
 
+def _pick_steam_server(servers: list[dict], address: str) -> dict | None:
+    """Выбрать сервер из реестра Steam: только Rust, приоритет точному порту."""
+    if not servers:
+        return None
+    _, _, port_str = address.rpartition(":")
+    port = int(port_str) if port_str.isdigit() else None
+
+    rust = [sv for sv in servers
+            if sv.get("appid") == config.RUST_APP_ID
+            or str(sv.get("gamedir", "")).lower() == "rust"]
+    if not rust:
+        rust = servers
+
+    if port is not None:
+        for sv in rust:
+            if str(sv.get("addr", "")).endswith(f":{port}"):
+                return sv
+    return rust[0]
+
+
 async def find_server_map_url(ip: str, port: int) -> str | None:
     """Поиск ссылки на живую карту Rust-сервера (Leaf webmap и популярные порты).
     Проверяет все кандидаты параллельно, результат кэшируется на 10 минут."""
@@ -751,6 +771,22 @@ async def cmd_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = await loop.run_in_executor(None, __import__("a2s_query").query_server, address)
 
     if not info:
+        # UDP не ответил — пробуем статус из реестра Steam (HTTP)
+        steam_servers = await steam_api.get_server_list(address)
+        target = _pick_steam_server(steam_servers, address)
+        if target:
+            msg = (
+                f"🖥 <b>Сервер Rust</b> (данные Steam)\n\n"
+                f"📛 <b>{target.get('name', '?')}</b>\n"
+                f"🗺 Карта: {target.get('map', '?')}\n"
+                f"👥 Игроки: <b>{target.get('players', 0)}/{target.get('max_players', 0)}</b>\n"
+                f"🌐 <code>{target.get('addr', address)}</code>\n\n"
+                f"⚠️ Сервер не отвечает на UDP-запросы с сети хостинга бота.\n"
+                f"Данные из реестра Steam — обновляются раз в несколько минут."
+            )
+            await update.message.reply_text(msg, parse_mode="HTML", disable_web_page_preview=True)
+            return
+
         await update.message.reply_text(
             f"❌ Сервер <code>{address}</code> не отвечает.\n\n"
             "Проверь IP и порт. Убедись, что сервер онлайн.",
@@ -796,6 +832,21 @@ async def cmd_players(update: Update, context: ContextTypes.DEFAULT_TYPE):
     players = await loop.run_in_executor(None, __import__("a2s_query").query_players, address)
 
     if players is None:
+        # UDP не ответил — узнаём хотя бы статус сервера из реестра Steam
+        steam_servers = await steam_api.get_server_list(address)
+        target = _pick_steam_server(steam_servers, address)
+        if target:
+            online = target.get("players", 0)
+            await update.message.reply_text(
+                f"🟢 <b>Сервер онлайн</b> — <b>{online}</b>/{target.get('max_players', 0)} игроков\n\n"
+                f"📛 {target.get('name', '?')}\n"
+                f"🗺 Карта: {target.get('map', '?')}\n\n"
+                f"⚠️ Список ников недоступен: хостинг бота не пропускает UDP-запросы "
+                f"к серверу, а имена игроков Steam по HTTP не отдаёт.\n"
+                f"⚡ Статус тоже доступен: <code>/server {address}</code>",
+                parse_mode="HTML",
+            )
+            return
         await update.message.reply_text(
             f"❌ Сервер <code>{address}</code> не отвечает.",
             parse_mode="HTML",

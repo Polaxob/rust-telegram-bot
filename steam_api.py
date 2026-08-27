@@ -241,3 +241,27 @@ async def get_servers_at_address(ip: str) -> list[dict]:
                 return []
             data = await resp.json()
             return data.get("response", {}).get("servers", [])
+
+
+async def get_server_list(addr: str) -> list[dict]:
+    """
+    Живые показатели серверов на IP из реестра Steam: имя, карта, игроки/макс.
+    Работает по HTTP — нужно, когда UDP-запросы к серверу заблокированы
+    (например, облачный хостинг бота не пускает UDP).
+    Серверы сами публикуют статистику в Steam раз в несколько минут.
+    Возвращает список: [{'addr', 'name', 'map', 'players', 'max_players', ...}]
+    """
+    ip = addr.strip().split(":")[0]
+    url = "https://api.steampowered.com/IGameServersService/GetServerList/v1/"
+    params = {
+        "key": config.STEAM_API_KEY,
+        "filter": rf"\addr\{ip}",
+        "limit": 10,
+        "format": "json",
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, timeout=12) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            return data.get("response", {}).get("servers", [])
