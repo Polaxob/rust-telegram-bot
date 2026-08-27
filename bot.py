@@ -1040,7 +1040,13 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
     app.add_handler(CallbackQueryHandler(callback_players_page, pattern=r"^players\|"))
     app.add_handler(CallbackQueryHandler(callback_support, pattern=r"^support$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_owner_reply))
+    if config.OWNER_CHAT_ID:
+        app.add_handler(
+            MessageHandler(
+                filters.TEXT & filters.REPLY & filters.Chat(chat_id=config.OWNER_CHAT_ID),
+                handle_owner_reply,
+            )
+        )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_support_message))
 
     logger.info("Бот запущен! OWNER_CHAT_ID=%s", config.OWNER_CHAT_ID)
