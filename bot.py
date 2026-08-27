@@ -139,8 +139,13 @@ async def _show_search_results(update: Update, nick: str):
                 )
                 return
         await update.message.reply_text(
-            f"❌ Не удалось найти игроков с ником «{nick}».\n"
-            "Попробуй ввести SteamID или полную ссылку на профиль.",
+            f"❌ Steam не нашёл игроков с ником «{nick}».\n\n"
+            "Это может быть, если ник сменили недавно или профиль не "
+            "попал в поиск Steam.\n\n"
+            "🔥 <b>Надёжный способ:</b> пришли ссылку на свой профиль:\n"
+            "<code>/profile steamcommunity.com/id/твой_ник</code>\n"
+            "или SteamID из клиента Steam:\n"
+            "Профиль → Изменить профиль → Ссылка на аккаунт.",
         )
         return
 
