@@ -186,22 +186,33 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             rust_hours = "Игра не найдена в библиотеке"
 
-    # Текущая игра
+    # Текущая игра и Rust-статус
     game_text = ""
+    in_rust = False
     if persona_state == 6:
+        game_id = summary.get("gameid", 0)
         game_extra = summary.get("gameextrainfo", "")
         game_name = summary.get("gamename", "")
-        if game_extra:
-            game_text = f"\n🎯 Играет: <b>{game_extra}</b>"
+        # Проверяем, играет ли конкретно в Rust (appid 252490)
+        if game_id == config.RUST_APP_ID:
+            in_rust = True
+            game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
+        elif game_extra:
+            game_text = f"\n🎮 Сейчас в другой игре: <b>{game_extra}</b>"
         elif game_name:
-            game_text = f"\n🎯 Играет: <b>{game_name}</b>"
+            game_text = f"\n🎮 Сейчас в другой игре: <b>{game_name}</b>"
         else:
-            game_text = "\n🎯 Играет сейчас"
+            game_text = "\n🎮 Сейчас играет"
 
-    # Последний вход
+    # Rust-онлайн
+    rust_status = "🟢 Да — в сети" if in_rust else "🔴 Нет"
+
+    # Последний вход (последняя активность в Steam)
     last_seen = ""
     if last_logoff:
-        last_seen = f"\n🕐 Последний вход: {time_ago(datetime.fromtimestamp(last_logoff, tz=timezone.utc).isoformat())}"
+        dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
+        ago = time_ago(dt.isoformat())
+        last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
 
     # Баны
     ban_text = ""
@@ -228,9 +239,10 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 <code>{steam_id}</code>\n"
         f"{'🌍 ' + country_emoji + ' ' + country if country else ''}\n"
         f"📊 Статус: <b>{state_text}</b>"
-        f"{game_text}"
+        f"{game_text}\n"
+        f"🟠 <b>В сети в Rust:</b> {rust_status}"
         f"{last_seen}\n\n"
-        f"⏱ <b>Время в Rust:</b> {rust_hours}"
+        f"⏱ <b>Общее время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
         f"🔗 <a href=\"{profile_url}\">Открыть профиль в Steam</a>"
     )
@@ -270,7 +282,9 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     last_seen = ""
     if last_logoff:
-        last_seen = f"\n🕐 Последний вход: {time_ago(datetime.fromtimestamp(last_logoff, tz=timezone.utc).isoformat())}"
+        dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
+        ago = time_ago(dt.isoformat())
+        last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
 
     games = await steam_api.get_owned_games(steam_id)
     rust_hours = "🔒 Профиль приватный — данные скрыты"
@@ -296,20 +310,28 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ban_text = "\n" + "\n".join(ban_parts)
 
     game_text = ""
+    in_rust = False
     if persona_state == 6:
+        game_id = summary.get("gameid", 0)
         game_extra = summary.get("gameextrainfo", "")
-        if game_extra:
-            game_text = f"\n🎯 Играет: <b>{game_extra}</b>"
+        if game_id == config.RUST_APP_ID:
+            in_rust = True
+            game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
+        elif game_extra:
+            game_text = f"\n🎮 Сейчас в другой игре: <b>{game_extra}</b>"
         else:
-            game_text = "\n🎯 Играет сейчас"
+            game_text = "\n🎮 Сейчас играет"
+
+    rust_status = "🟢 Да — в сети" if in_rust else "🔴 Нет"
 
     msg = (
         f"{'🟢' if persona_state > 0 else '🔴'} <b>{name}</b>\n\n"
         f"🆔 <code>{steam_id}</code>\n"
         f"📊 Статус: <b>{state_text}</b>"
-        f"{game_text}"
+        f"{game_text}\n"
+        f"🟠 <b>В сети в Rust:</b> {rust_status}"
         f"{last_seen}\n\n"
-        f"⏱ <b>Время в Rust:</b> {rust_hours}"
+        f"⏱ <b>Общее время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
         f"🔗 <a href=\"{profile_url}\">Открыть профиль в Steam</a>"
     )
