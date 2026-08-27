@@ -98,7 +98,7 @@ async def get_player_summary(steam_id: str) -> dict | None:
         "steamids": steam_id,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
@@ -116,7 +116,7 @@ async def get_owned_games(steam_id: str) -> list[dict]:
         "include_played_free_games": 1,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()
@@ -131,7 +131,7 @@ async def get_player_bans(steam_id: str) -> dict | None:
         "steamids": steam_id,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
@@ -147,7 +147,7 @@ async def resolve_vanity_url(vanity_url: str) -> str | None:
         "vanityurl": vanity_url,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
@@ -191,7 +191,7 @@ async def get_steam_level(steam_id: str) -> dict | None:
         "steamid": steam_id,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
@@ -206,7 +206,7 @@ async def get_friend_count(steam_id: str) -> int | None:
         "steamid": steam_id,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
@@ -222,7 +222,7 @@ async def get_recent_games(steam_id: str) -> list[dict]:
         "steamid": steam_id,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()
@@ -243,7 +243,7 @@ async def get_servers_at_address(ip: str) -> list[dict]:
         "format": "json",
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as resp:
+        async with session.get(url, params=params, timeout=10) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()

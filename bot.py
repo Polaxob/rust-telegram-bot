@@ -396,7 +396,12 @@ async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Ошибка: неверный SteamID.")
         return
 
-    msg, reply_markup = await _build_profile_message(steam_id, steam_id)
+    try:
+        msg, reply_markup = await _build_profile_message(steam_id, steam_id)
+    except Exception as e:
+        await query.edit_message_text(f"❌ Ошибка при загрузке профиля: {e}")
+        return
+
     if msg is None:
         await query.edit_message_text(
             "❌ Не удалось получить данные из Steam.\n"
