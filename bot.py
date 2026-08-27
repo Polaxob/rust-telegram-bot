@@ -35,17 +35,11 @@ PERSONA_STATES = {
 
 
 def format_playtime(minutes: int | None) -> str:
-    """Конвертация минут в читаемый формат: часы и минуты."""
+    """Конвертация минут в читаемый формат: только часы и минуты."""
     if minutes is None:
         return "Н/Д"
     hours = minutes // 60
     mins = minutes % 60
-    if hours >= 24:
-        days = hours // 24
-        h = hours % 24
-        if mins > 0:
-            return f"{days} дн {h} ч {mins} мин"
-        return f"{days} дн {h} ч"
     if hours > 0:
         if mins > 0:
             return f"{hours} ч {mins} мин"
