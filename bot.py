@@ -11,6 +11,8 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 import config
@@ -188,6 +190,8 @@ async def find_server_map_url(ip: str, port: int) -> str | None:
 # ────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    logger.info("start: chat_id=%s username=%s", user.id, user.username)
     text = (
         "🎮 <b>Rust Player Bot</b>\n\n"
         "Проверяй статистику игроков и серверы Rust в Telegram!\n\n"
@@ -201,7 +205,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/profile nickname</code>\n"
         "<code>/server 185.25.217.34:28015</code>"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("🆘 Поддержка", callback_data="support")]]
+    await update.message.reply_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 # ────────────────────────────────────────────
@@ -934,6 +941,45 @@ async def callback_players_page(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ────────────────────────────────────────────
+#  Поддержка: кнопка → сообщение владельцу
+# ────────────────────────────────────────────
+
+async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not config.OWNER_CHAT_ID:
+        await query.edit_message_text("🆘 Поддержка временно недоступна — попробуй позже.")
+        return
+    context.user_data["awaiting_support"] = True
+    await query.edit_message_text(
+        "🆘 <b>Поддержка</b>\n\n"
+        "Опиши проблему или вопрос одним сообщением — "
+        "я передам его разработчику. Ответ придёт прямо сюда.",
+        parse_mode="HTML",
+    )
+
+
+async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_support"):
+        return
+    context.user_data["awaiting_support"] = False
+
+    user = update.effective_user
+    sender = user.full_name or str(user.id)
+    if user.username:
+        sender += f" (@{user.username})"
+
+    try:
+        await update.message.forward(chat_id=config.OWNER_CHAT_ID)
+    except Exception:
+        text = f"🆘 <b>Сообщение в поддержку</b>\n👤 {sender} (id {user.id})\n\n{update.message.text}"
+        await context.bot.send_message(
+            chat_id=config.OWNER_CHAT_ID, text=text, parse_mode="HTML"
+        )
+    await update.message.reply_text("✅ Отправлено разработчику. Жди ответа здесь.")
+
+
+# ────────────────────────────────────────────
 #  Запуск бота
 # ────────────────────────────────────────────
 
@@ -954,8 +1000,10 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
     app.add_handler(CallbackQueryHandler(callback_players_page, pattern=r"^players\|"))
+    app.add_handler(CallbackQueryHandler(callback_support, pattern=r"^support$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_support_message))
 
-    logger.info("Бот запущен!")
+    logger.info("Бот запущен! OWNER_CHAT_ID=%s", config.OWNER_CHAT_ID)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

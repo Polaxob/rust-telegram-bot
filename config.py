@@ -22,5 +22,11 @@ except ValueError:
 RCON_SERVER = os.getenv("RCON_SERVER", "")
 RCON_PASSWORD = os.getenv("RCON_PASSWORD", "")
 
+# Telegram ID владельца — сюда приходят сообщения из кнопки «Поддержка»
+try:
+    OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID", "") or 0) or None
+except ValueError:
+    OWNER_CHAT_ID = None
+
 # App ID Rust в Steam
 RUST_APP_ID = 252490
