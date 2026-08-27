@@ -122,7 +122,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  Поиск игроков по нику
 # ────────────────────────────────────────────
 
-async def _show_search_results(update: Update, nick: str):
+async def _show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE, nick: str):
     """Поиск по нику: список игроков, онлайн первыми."""
     await update.message.chat.send_action("typing")
 
@@ -165,6 +165,18 @@ async def _show_search_results(update: Update, nick: str):
     # Онлайн первыми, потом оффлайн
     enriched.sort(key=lambda x: not x["online"])
 
+    # Запоминаем результат, чтобы можно было вернуться к списку кнопкой «Назад»
+    context.user_data["last_search"] = {
+        "nick": nick,
+        "players": enriched,
+    }
+
+    msg, reply_markup = _build_search_list_message(nick, enriched)
+    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
+
+
+def _build_search_list_message(nick: str, enriched: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+    """Собрать сообщение списка игроков + клавиатуру выбора."""
     lines = [f"🔎 <b>Найдено по нику «{nick}»:</b>\n"]
     keyboard_rows = []
     for i, p in enumerate(enriched, 1):
@@ -176,9 +188,7 @@ async def _show_search_results(update: Update, nick: str):
         ])
 
     reply_markup = InlineKeyboardMarkup(keyboard_rows)
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode="HTML", reply_markup=reply_markup
-    )
+    return "\n".join(lines), reply_markup
 
 
 COUNTRY_FLAGS = {
@@ -225,7 +235,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_direct and not is_url:
         # Поиск по нику: показываем список игроков (онлайн первыми)
-        await _show_search_results(update, user_input)
+        await _show_search_results(update, context, user_input)
         return
 
     steam_id = await steam_api.resolve_input_to_steam_id(user_input)
@@ -394,9 +404,33 @@ async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Кнопка «Назад к списку», если открыли профиль из результатов поиска
+    if context.user_data.get("last_search"):
+        back_btn = [InlineKeyboardButton("⬅️ Назад к списку", callback_data="back_to_list")]
+        keyboard = reply_markup.inline_keyboard + [back_btn]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
     await query.edit_message_text(
         msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
     )
+
+
+# ────────────────────────────────────────────
+#  Callback: Назад к списку поиска
+# ────────────────────────────────────────────
+
+async def callback_back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    last = context.user_data.get("last_search")
+    if not last:
+        await query.answer("Поиск устарел, попробуй /profile ник заново")
+        return
+
+    nick = last.get("nick", "")
+    players = last.get("players", [])
+    msg, reply_markup = _build_search_list_message(nick, players)
+    await query.answer("Возвращаюсь к списку")
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=reply_markup)
 
 
 # ────────────────────────────────────────────
@@ -902,6 +936,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
     app.add_handler(CallbackQueryHandler(callback_pick, pattern=r"^pick:"))
+    app.add_handler(CallbackQueryHandler(callback_back_to_list, pattern=r"^back_to_list"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
