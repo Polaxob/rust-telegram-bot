@@ -958,6 +958,7 @@ async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🆘 Поддержка временно недоступна — попробуй позже.")
         return
     _support_active.add(query.message.chat.id)
+    logger.info("support: OPEN chat_id=%s (active=%s)", query.message.chat.id, _support_active)
     await query.edit_message_text(
         "🆘 <b>Поддержка</b>\n\n"
         "Опиши проблему или вопрос одним сообщением — "
@@ -969,7 +970,9 @@ async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in _support_active:
+        logger.info("support: IGNORE message from chat_id=%s (not active)", chat_id)
         return
+    logger.info("support: GOT message from chat_id=%s", chat_id)
     _support_active.discard(chat_id)
 
     user = update.effective_user
