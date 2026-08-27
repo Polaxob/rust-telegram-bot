@@ -1,9 +1,25 @@
 import socket
 import struct
+import time
 
 
 HEADER = b'\xFF\xFF\xFF\xFF'
 INFO_REQUEST = HEADER + b'\x54\x53\x6F\x75\x72\x63\x65\x20\x45\x6E\x67\x69\x6E\x65\x20\x51\x75\x65\x72\x79\x00'
+
+# Простой кэш: addr -> (порядковый, результат)
+_INFO_CACHE = {}
+_INFO_CACHE_TTL = 60  # секунд
+
+
+def _cache_get(key: str):
+    item = _INFO_CACHE.get(key)
+    if item and time.time() - item[0] < _INFO_CACHE_TTL:
+        return item[1]
+    return None
+
+
+def _cache_set(key: str, value):
+    _INFO_CACHE[key] = (time.time(), value)
 
 
 def _decode_string(raw: bytes, start: int = 0):
@@ -65,11 +81,14 @@ def _parse_info(data: bytes) -> dict | None:
 
 
 def _try_query(address: str, timeout: float = 2.0) -> dict | None:
-    """Пробует A2S запрос к одному адресу."""
+    """Пробует A2S запрос к одному адресу (с кэшем)."""
+    cached = _cache_get(address)
+    if cached is not None:
+        return cached
     data = _send_recv(address, INFO_REQUEST, timeout)
-    if data:
-        return _parse_info(data)
-    return None
+    result = _parse_info(data) if data else None
+    _cache_set(address, result)
+    return result
 
 
 def query_server(address: str, timeout: float = 5.0) -> dict | None:
@@ -93,6 +112,11 @@ def query_server(address: str, timeout: float = 5.0) -> dict | None:
             return result
 
     return None
+
+
+def query_server_at(address: str, timeout: float = 2.0) -> dict | None:
+    """Быстрый единичный A2S запрос к точному адресу (один порт, одна попытка)."""
+    return _try_query(address, timeout=timeout)
 
 
 def _players_with_challenge(address: str, timeout: float = 2.0) -> list[dict] | None:

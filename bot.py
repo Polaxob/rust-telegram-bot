@@ -537,38 +537,38 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import a2s_query
         loop = asyncio.get_event_loop()
 
-        # 1) Пробуем A2S по адресу из Steam (релейный, может не отвечать)
-        server_info = await loop.run_in_executor(None, a2s_query.query_server, game_server_ip)
+        real_ip = game_server_ip.split(":")[0]
+        steam_port = int(game_server_ip.split(":")[1]) if ":" in game_server_ip else 28015
 
-        # 2) Если не ответил — ищем реальные серверы на этом IP через мастер-сервер Steam
-        if not server_info and game_server_ip:
-            real_ip = game_server_ip.split(":")[0]
-            steam_port = int(game_server_ip.split(":")[1]) if ":" in game_server_ip else 28015
-            registered = await steam_api.get_servers_at_address(real_ip)
-            rust_servers = [sv for sv in registered if sv.get("gamedir", "").lower() in ("rust", "252490") or sv.get("game", "").lower() == "rust"]
-            if not rust_servers:
-                rust_servers = registered  # любой gamedir, вдруг не заполнен
+        # 1) Сразу ищем реальные серверы через мастер-сервер Steam (быстро, HTTP ~0.3 сек)
+        registered = await steam_api.get_servers_at_address(real_ip)
+        rust_servers = [sv for sv in registered if sv.get("gamedir", "").lower() in ("rust", "252490") or sv.get("game", "").lower() == "rust"]
+        if not rust_servers:
+            rust_servers = registered  # любой gamedir, вдруг не заполнен
 
-            # Сортируем по близости порта к релейному порту Steam
-            # (20000 → реальный 20010, а не 10010)
-            def _port_diff(sv):
-                try:
-                    return abs(int(sv.get("addr", "0:0").split(":")[1]) - steam_port)
-                except (IndexError, ValueError):
-                    return 10**9
-            rust_servers.sort(key=_port_diff)
+        # Сортируем по близости порта к релейному порту Steam
+        # (20000 → реальный 20010, а не 10010)
+        def _port_diff(sv):
+            try:
+                return abs(int(sv.get("addr", "0:0").split(":")[1]) - steam_port)
+            except (IndexError, ValueError):
+                return 10**9
+        rust_servers.sort(key=_port_diff)
 
-            for sv in rust_servers:
-                addr = sv.get("addr", "")
-                if not addr:
-                    continue
-                # не опрашиваем уже проверенный адрес
-                if addr == game_server_ip:
-                    continue
-                server_info = await loop.run_in_executor(None, a2s_query.query_server, addr)
-                if server_info:
-                    game_server_ip = addr
-                    break
+        # 2) Один точный A2S к ближайшему порту (сервер отвечает мгновенно)
+        server_info = None
+        for sv in rust_servers:
+            addr = sv.get("addr", "")
+            if not addr:
+                continue
+            server_info = await loop.run_in_executor(None, a2s_query.query_server_at, addr)
+            if server_info:
+                game_server_ip = addr
+                break
+
+        # 3) Fallback: если мастер-сервер пуст — единичный запрос к релейному адресу
+        if not server_info:
+            server_info = await loop.run_in_executor(None, a2s_query.query_server_at, game_server_ip)
 
         if server_info:
             current_text = (
