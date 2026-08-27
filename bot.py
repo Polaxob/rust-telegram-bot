@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 
 import config
+import rcon_query
 import steam_api
 
 logging.basicConfig(
@@ -109,12 +110,15 @@ PAGE_SIZE = 5
 
 
 async def _fetch_players_cached(address: str) -> list | None:
-    """Список игроков с кэшем. None — сервер не ответил на UDP."""
+    """Список игроков с кэшем. None — сервер не ответил ни по одному каналу."""
     cached = _PLAYERS_CACHE.get(address)
     if cached and time.time() - cached[0] < _PLAYERS_CACHE_TTL:
         return cached[1]
     loop = asyncio.get_event_loop()
     players = await loop.run_in_executor(None, __import__("a2s_query").query_players, address)
+    if players is None and config.RCON_PASSWORD and config.RCON_SERVER:
+        # UDP не дошёл — пробуем RCON (TCP) для своего сервера
+        players = await loop.run_in_executor(None, rcon_query.query_players_rcon, address)
     if players is not None:
         _PLAYERS_CACHE[address] = (time.time(), players)
     return players
