@@ -860,8 +860,6 @@ async def cmd_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if map_url:
         msg += f"\n\n🗺️ <a href=\"{map_url}\">Живая карта сервера</a>"
-    else:
-        msg += "\n\n🗺 Живой карты на сервере нет — сервер не публикует веб-карту (Leaf)"
 
     await update.message.reply_text(msg, parse_mode="HTML", disable_web_page_preview=True)
 
