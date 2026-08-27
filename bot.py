@@ -102,10 +102,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "❓ <b>Как пользоваться</b>\n\n"
         "🔹 <b>Профиль игрока:</b>\n"
-        "<code>/profile 76561198012345678</code>\n"
-        "<code>/profile nickname</code>\n"
-        "<code>/profile steamcommunity.com/id/nickname</code>\n\n"
-        "Покажет: аватар, имя, онлайн/оффлайн, часы в Rust, баны.\n\n"
+        "<code>/profile nickname</code> — поиск по нику (онлайн первыми)\n"
+        "<code>/profile 76561198012345678</code> — по SteamID\n"
+        "<code>/profile steamcommunity.com/id/nickname</code> — по ссылке\n\n"
+        "Покажет: аватар, имя, онлайн/оффлайн, часы в Rust, баны, страну.\n\n"
         "🔹 <b>Инфо о сервере:</b>\n"
         "<code>/server 185.25.217.34:28015</code>\n"
         "Покажет: название, карта, кол-во игроков.\n\n"
@@ -116,6 +116,84 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "battlemetrics.com/servers/rust"
     )
     await update.message.reply_text(text, parse_mode="HTML")
+
+
+# ────────────────────────────────────────────
+#  Поиск игроков по нику
+# ────────────────────────────────────────────
+
+async def _show_search_results(update: Update, nick: str):
+    """Поиск по нику: список игроков, онлайн первыми."""
+    await update.message.chat.send_action("typing")
+
+    players = await steam_api.search_players(nick, limit=10)
+    if not players:
+        # Если поиск пуст — попробуем резолвить как кастомную ссылку (id/nick)
+        steam_id = await steam_api.resolve_vanity_url(nick)
+        if steam_id:
+            msg, reply_markup = await _build_profile_message(steam_id, nick)
+            if msg:
+                await update.message.reply_text(
+                    msg, parse_mode="HTML", reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                )
+                return
+        await update.message.reply_text(
+            f"❌ Не удалось найти игроков с ником «{nick}».\n"
+            "Попробуй ввести SteamID или полную ссылку на профиль.",
+        )
+        return
+
+    # Параллельно получаем summaries, чтобы определить кто онлайн
+    steam_ids = [p["steam_id"] for p in players]
+    summaries = await asyncio.gather(
+        *(steam_api.get_player_summary(sid) for sid in steam_ids),
+        return_exceptions=True,
+    )
+
+    enriched = []
+    for p, s in zip(players, summaries):
+        online = isinstance(s, dict) and s.get("personastate", 0) > 0
+        country = (s.get("loccountrycode", "") if isinstance(s, dict) else "") or p.get("country", "")
+        enriched.append({**p, "online": online, "country": country})
+
+    # Онлайн первыми, потом оффлайн
+    enriched.sort(key=lambda x: not x["online"])
+
+    lines = [f"🔎 <b>Найдено по нику «{nick}»:</b>\n"]
+    keyboard_rows = []
+    for i, p in enumerate(enriched, 1):
+        dot = "🟢" if p["online"] else "🔴"
+        flag = COUNTRY_FLAGS.get(p["country"], "")
+        lines.append(f"{dot} <b>{p['name']}</b> {flag}")
+        keyboard_rows.append([
+            InlineKeyboardButton(f"{i}. {p['name']}", callback_data=f"pick:{p['steam_id']}")
+        ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="HTML", reply_markup=reply_markup
+    )
+
+
+COUNTRY_FLAGS = {
+    "US": "🇺🇸", "DE": "🇩🇪", "FR": "🇫🇷", "GB": "🇬🇧",
+    "RU": "🇷🇺", "NL": "🇳🇱", "AU": "🇦🇺", "SE": "🇸🇪",
+    "FI": "🇫🇮", "NO": "🇳🇴", "PL": "🇵🇱", "BR": "🇧🇷",
+    "UA": "🇺🇦", "KZ": "🇰🇿", "TR": "🇹🇷", "IL": "🇮🇱",
+    "BY": "🇧🇾", "CA": "🇨🇦", "CZ": "🇨🇿", "ES": "🇪🇸",
+    "IT": "🇮🇹", "JP": "🇯🇵", "KR": "🇰🇷", "MX": "🇲🇽",
+    "CN": "🇨🇳", "IN": "🇮🇳", "AR": "🇦🇷", "CH": "🇨🇭",
+    "AT": "🇦🇹", "BE": "🇧🇪", "BG": "🇧🇬", "HR": "🇭🇷",
+    "DK": "🇩🇰", "EE": "🇪🇪", "GR": "🇬🇷", "HU": "🇭🇺",
+    "IE": "🇮🇪", "LV": "🇱🇻", "LT": "🇱🇹", "LU": "🇱🇺",
+    "MD": "🇲🇩", "PT": "🇵🇹", "RO": "🇷🇴", "RS": "🇷🇸",
+    "SK": "🇸🇰", "SI": "🇸🇮", "ZA": "🇿🇦", "NG": "🇳🇬",
+    "EG": "🇪🇬", "AE": "🇦🇪", "SA": "🇸🇦", "IR": "🇮🇷",
+    "PK": "🇵🇰", "BD": "🇧🇩", "TH": "🇹🇭", "VN": "🇻🇳",
+    "PH": "🇵🇭", "ID": "🇮🇩", "MY": "🇲🇾", "SG": "🇸🇬",
+    "NZ": "🇳🇿", "CL": "🇨🇱", "CO": "🇨🇴", "PE": "🇵🇪",
+}
 
 
 # ────────────────────────────────────────────
@@ -136,6 +214,15 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = " ".join(context.args)
     await update.message.chat.send_action("typing")
 
+    # Определяем тип ввода: SteamID64 (17 цифр) или ссылка — показываем профиль напрямую
+    is_direct = user_input.isdigit() and len(user_input) == 17
+    is_url = "steamcommunity.com" in user_input
+
+    if not is_direct and not is_url:
+        # Поиск по нику: показываем список игроков (онлайн первыми)
+        await _show_search_results(update, user_input)
+        return
+
     steam_id = await steam_api.resolve_input_to_steam_id(user_input)
     if not steam_id:
         await update.message.reply_text(
@@ -144,6 +231,21 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    msg, reply_markup = await _build_profile_message(steam_id, user_input)
+    if msg is None:
+        await update.message.reply_text(
+            "❌ Не удалось получить данные из Steam.\n"
+            "Возможно, SteamID неверный или профиль приватный.",
+        )
+        return
+
+    await update.message.reply_text(
+        msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
+    )
+
+
+async def _build_profile_message(steam_id: str, user_input: str) -> tuple[str | None, InlineKeyboardMarkup | None]:
+    """Загрузить данные и собрать сообщение профиля + клавиатуру."""
     summary_task = steam_api.get_player_summary(steam_id)
     games_task = steam_api.get_owned_games(steam_id)
     bans_task = steam_api.get_player_bans(steam_id)
@@ -154,14 +256,9 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if isinstance(summary, Exception) or summary is None:
-        await update.message.reply_text(
-            "❌ Не удалось получить данные из Steam.\n"
-            "Возможно, SteamID неверный или профиль приватный.",
-        )
-        return
+        return None, None
 
     name = summary.get("personaname", "Неизвестно")
-    avatar = summary.get("avatarfull", "")
     profile_url = summary.get("profileurl", "")
     persona_state = summary.get("personastate", 0)
     state_text = PERSONA_STATES.get(persona_state, "Неизвестно")
@@ -182,7 +279,6 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Текущая игра и Rust-статус
     game_text = ""
-    in_rust = False
     game_id = summary.get("gameid", 0)
     game_extra = summary.get("gameextrainfo", "")
     game_name = summary.get("gamename", "")
@@ -192,7 +288,6 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if game_id:
         if is_rust:
-            in_rust = True
             game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
         elif game_extra:
             game_text = f"\n🎮 Сейчас в другой игре: <b>{game_extra}</b>"
@@ -269,7 +364,32 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    return msg, reply_markup
+
+
+# ────────────────────────────────────────────
+#  Callback: Выбран игрок из списка поиска
+# ────────────────────────────────────────────
+
+async def callback_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Открываю профиль...")
+
+    data = query.data.split(":", 1)
+    steam_id = data[1] if len(data) > 1 else ""
+    if not steam_id.isdigit():
+        await query.edit_message_text("❌ Ошибка: неверный SteamID.")
+        return
+
+    msg, reply_markup = await _build_profile_message(steam_id, steam_id)
+    if msg is None:
+        await query.edit_message_text(
+            "❌ Не удалось получить данные из Steam.\n"
+            "Возможно, SteamID неверный или профиль приватный.",
+        )
+        return
+
+    await query.edit_message_text(
         msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True
     )
 
@@ -776,6 +896,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_refresh, pattern=r"^refresh:"))
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
+    app.add_handler(CallbackQueryHandler(callback_pick, pattern=r"^pick:"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

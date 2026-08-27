@@ -1,5 +1,93 @@
 import aiohttp
 import config
+import asyncio
+
+# Блокировка, чтобы не долбить Steam поиск параллельно
+_search_lock = asyncio.Lock()
+
+
+async def search_players(text: str, limit: int = 10) -> list[dict]:
+    """
+    Поиск игроков Steam по нику через SearchCommunityAjax (работает без логина).
+    Возвращает список: [{'steam_id', 'name', 'profile_url', 'avatar', 'country'}, ...]
+    """
+    if not text or len(text.strip()) < 3:
+        return []
+    text = text.strip()
+
+    async with _search_lock:
+        async with aiohttp.ClientSession() as session:
+            # Шаг 1: получаем анонимную сессию (sessionid cookie)
+            try:
+                async with session.get("https://steamcommunity.com/", timeout=10) as resp:
+                    await resp.text()
+            except Exception:
+                return []
+
+            sessionid = ""
+            for c in session.cookie_jar:
+                if c.key == "sessionid":
+                    sessionid = c.value
+                    break
+
+            # Шаг 2: AJAX-поиск пользователей
+            url = "https://steamcommunity.com/search/SearchCommunityAjax"
+            params = {
+                "text": text,
+                "filter": "users",
+                "sessionid": sessionid,
+                "steamid_user": "",
+                "page": 1,
+            }
+            headers = {
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/126.0 Safari/537.36"),
+                "Referer": f"https://steamcommunity.com/search/users/#text={text}",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            }
+            try:
+                async with session.get(url, params=params, headers=headers, timeout=12) as resp:
+                    data = await resp.json()
+            except Exception:
+                return []
+
+            if data.get("success") != 1:
+                return []
+
+            html = data.get("html", "")
+            return _parse_search_results(html, limit)
+
+
+def _parse_search_results(html: str, limit: int) -> list[dict]:
+    """Распарсить HTML результатов поиска Steam."""
+    import re
+
+    results = []
+    # Каждый результат — блок search_row
+    for block in re.findall(r'<div class="search_row".*?(?=<div class="search_row"|$)', html, re.S):
+        m_account = re.search(r'data-miniprofile="(\d+)"', block)
+        m_name = re.search(r'class="searchPersonaName"[^>]*>([^<]+)</a>', block)
+        m_url = re.search(r'href="(https://steamcommunity\.com/[^"]+)"', block)
+        m_country = re.search(r'countryflags/([a-z]{2})\.gif', block, re.I)
+        m_avatar = re.search(r'<img src="(https://[^"]+_medium\.jpg)"', block)
+
+        if not m_account or not m_name or not m_url:
+            continue
+
+        account_id = int(m_account.group(1))
+        steam_id = str(76561197960265728 + account_id)
+        results.append({
+            "steam_id": steam_id,
+            "name": m_name.group(1).strip(),
+            "profile_url": m_url.group(1),
+            "avatar": m_avatar.group(1) if m_avatar else "",
+            "country": m_country.group(1).lower() if m_country else "",
+        })
+        if len(results) >= limit:
+            break
+
+    return results
 
 
 async def get_player_summary(steam_id: str) -> dict | None:
