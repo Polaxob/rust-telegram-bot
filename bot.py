@@ -941,8 +941,15 @@ async def callback_players_page(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ────────────────────────────────────────────
-#  Поддержка: кнопка → сообщение владельцу
+#  Поддержка: кнопка → сообщение владельцу,
+#  владелец отвечает reply → игроку
 # ────────────────────────────────────────────
+
+# chat_id игроков, которым сейчас можно писать в поддержку
+_support_active: set[int] = set()
+# message_id сообщения у владельца -> chat_id игрока (для ответа reply)
+_owner_reply_map: dict[int, int] = {}
+
 
 async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -950,7 +957,7 @@ async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not config.OWNER_CHAT_ID:
         await query.edit_message_text("🆘 Поддержка временно недоступна — попробуй позже.")
         return
-    context.user_data["awaiting_support"] = True
+    _support_active.add(query.message.chat.id)
     await query.edit_message_text(
         "🆘 <b>Поддержка</b>\n\n"
         "Опиши проблему или вопрос одним сообщением — "
@@ -960,23 +967,52 @@ async def callback_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("awaiting_support"):
+    chat_id = update.effective_chat.id
+    if chat_id not in _support_active:
         return
-    context.user_data["awaiting_support"] = False
+    _support_active.discard(chat_id)
 
     user = update.effective_user
     sender = user.full_name or str(user.id)
     if user.username:
         sender += f" (@{user.username})"
 
+    delivered_id = None
     try:
-        await update.message.forward(chat_id=config.OWNER_CHAT_ID)
+        fwd = await update.message.forward(chat_id=config.OWNER_CHAT_ID)
+        delivered_id = fwd.message_id
     except Exception:
         text = f"🆘 <b>Сообщение в поддержку</b>\n👤 {sender} (id {user.id})\n\n{update.message.text}"
-        await context.bot.send_message(
+        sent = await context.bot.send_message(
             chat_id=config.OWNER_CHAT_ID, text=text, parse_mode="HTML"
         )
+        delivered_id = sent.message_id
+    if delivered_id:
+        _owner_reply_map[delivered_id] = chat_id
     await update.message.reply_text("✅ Отправлено разработчику. Жди ответа здесь.")
+
+
+async def handle_owner_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Владелец отвечает (reply) на пересланное сообщение — ответ уходит игроку."""
+    if update.effective_chat.id != config.OWNER_CHAT_ID:
+        return
+    reply = update.message.reply_to_message
+    if reply is None:
+        return
+    player_chat_id = _owner_reply_map.get(reply.message_id)
+    if player_chat_id is None:
+        return
+    text = update.message.text
+    if not text:
+        await update.message.reply_text("Отправить можно только текст.")
+        return
+    await context.bot.send_message(
+        chat_id=player_chat_id,
+        text=f"📩 <b>Ответ разработчика</b>\n\n{text}",
+        parse_mode="HTML",
+    )
+    _support_active.add(player_chat_id)
+    await update.message.reply_text("✅ Ответ доставлен игроку. Его ответ придёт сюда.")
 
 
 # ────────────────────────────────────────────
@@ -1001,6 +1037,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
     app.add_handler(CallbackQueryHandler(callback_players_page, pattern=r"^players\|"))
     app.add_handler(CallbackQueryHandler(callback_support, pattern=r"^support$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_owner_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_support_message))
 
     logger.info("Бот запущен! OWNER_CHAT_ID=%s", config.OWNER_CHAT_ID)
