@@ -2,7 +2,6 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from urllib.parse import quote
 
 import aiohttp
 
@@ -161,13 +160,12 @@ async def find_server_map_url(ip: str, port: int) -> str | None:
     if cached and time.time() - cached[0] < 600:
         return cached[1]
 
-    candidates = [
-        f"http://{ip}:8081/",          # Leaf webmap по умолчанию
-        f"http://{ip}:8080/",          # запасной
-        f"http://{ip}:{port}/",        # игровой порт (иногда там webmap)
-        f"http://{ip}:{port + 1}/",    # на один больше игрового
-        f"https://{ip}:8081/",
-    ]
+    candidates = []
+    for p in (8081, 8080, 8082, 28016):  # Leaf webmap и популярные порты
+        candidates.append(f"http://{ip}:{p}/")
+        candidates.append(f"https://{ip}:{p}/")
+    candidates.append(f"http://{ip}:{port}/")        # игровой порт (иногда webmap)
+    candidates.append(f"http://{ip}:{port + 1}/")    # на один больше игрового
 
     async def _check(url: str) -> str | None:
         try:
@@ -183,17 +181,6 @@ async def find_server_map_url(ip: str, port: int) -> str | None:
     found = next((u for u in results if u), None)
     _MAP_URL_CACHE[key] = (time.time(), found)
     return found
-
-
-def battlemetrics_link(ip: str, port: int) -> str:
-    """Ссылка на карту сервера на BattleMetrics (поиск по ip:port).
-
-    Работает для любого сервера — открывает его страницу, где есть карта
-    (и живая карта, если сервер её публикует). Официального источника
-    карт в Steam нет, поэтому берём трекер как неофициальный стандарт.
-    """
-    q = quote(f"{ip}:{port}")
-    return f"https://www.battlemetrics.com/servers/rust?q={q}"
 
 
 # ────────────────────────────────────────────
@@ -846,7 +833,6 @@ async def cmd_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🖥 <b>Сервер Rust</b> (данные Steam)\n\n"
                 f"📛 <b>{target.get('name', '?')}</b>\n"
                 f"🗺 Карта: {target.get('map', '?')}\n"
-                f"🗺️ <a href=\"{battlemetrics_link(ip, port)}\">Карта сервера (BattleMetrics)</a>\n"
                 f"👥 Игроки: <b>{target.get('players', 0)}/{target.get('max_players', 0)}</b>\n"
                 f"🌐 <code>{target.get('addr', address)}</code>\n\n"
                 f"⚠️ Сервер не отвечает на UDP-запросы с сети хостинга бота.\n"
@@ -875,7 +861,7 @@ async def cmd_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if map_url:
         msg += f"\n\n🗺️ <a href=\"{map_url}\">Живая карта сервера</a>"
     else:
-        msg += f"\n\n🗺 <a href=\"{battlemetrics_link(ip, port)}\">Карта сервера (BattleMetrics)</a>"
+        msg += "\n\n🗺 Живой карты на сервере нет — сервер не публикует веб-карту (Leaf)"
 
     await update.message.reply_text(msg, parse_mode="HTML", disable_web_page_preview=True)
 
