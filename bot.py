@@ -189,11 +189,12 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Текущая игра и Rust-статус
     game_text = ""
     in_rust = False
-    if persona_state == 6:
-        game_id = summary.get("gameid", 0)
-        game_extra = summary.get("gameextrainfo", "")
-        game_name = summary.get("gamename", "")
-        # Проверяем, играет ли конкретно в Rust (appid 252490)
+    game_id = summary.get("gameid", 0)
+    game_extra = summary.get("gameextrainfo", "")
+    game_name = summary.get("gamename", "")
+
+    if game_id:
+        # Есть gameid = игрок точно в игре
         if game_id == config.RUST_APP_ID:
             in_rust = True
             game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
@@ -313,9 +314,9 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     game_text = ""
     in_rust = False
-    if persona_state == 6:
-        game_id = summary.get("gameid", 0)
-        game_extra = summary.get("gameextrainfo", "")
+    game_id = summary.get("gameid", 0)
+    game_extra = summary.get("gameextrainfo", "")
+    if game_id:
         if game_id == config.RUST_APP_ID:
             in_rust = True
             game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
@@ -530,8 +531,8 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ─── Текущий сервер ───
     current_text = ""
-    if persona_state == 6 and game_server_ip:
-        # Игрок онлайн и есть IP сервера — запрашиваем через A2S
+    if game_server_ip:
+        # Есть IP сервера — запрашиваем через A2S
         import a2s_query
         loop = asyncio.get_event_loop()
         server_info = await loop.run_in_executor(None, a2s_query.query_server, game_server_ip)
@@ -549,19 +550,22 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  🌐 <code>{game_server_ip}</code>\n"
                 f"  ⏳ Не удалось получить инфо (сервер может быть закрыт)"
             )
-    elif persona_state == 6 and game_id == config.RUST_APP_ID:
+    elif game_id == config.RUST_APP_ID:
         current_text = (
             f"🟢 <b>Сейчас играет в Rust</b>\n"
             f"  ⚠️ IP сервера скрыт (приватный сервер)"
         )
-    elif persona_state == 6 and game_id:
+    elif game_id:
         current_text = (
             f"🎮 <b>Сейчас в другой игре</b>\n"
             f"  📛 {game_extra or 'Неизвестно'}"
         )
     else:
         state = PERSONA_STATES.get(persona_state, "Оффлайн")
-        current_text = f"🔴 <b>{state}</b> — сейчас не в игре"
+        if persona_state > 0:
+            current_text = f"🟢 <b>{state}</b> — сейчас не в игре"
+        else:
+            current_text = f"🔴 <b>{state}</b> — сейчас не в игре"
 
     # ─── Недавние серверы (из recently played) ───
     recent_text = ""
@@ -579,22 +583,12 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lines:
             recent_text = "\n\n📅 <b>Активность за 2 недели:</b>\n" + "\n".join(lines)
 
-    # ─── Подсказка ───
-    tip_text = ""
-    if not current_text.startswith("🟢"):
-        tip_text = (
-            "\n\n💡 <b>Совет:</b> Steam показывает IP сервера "
-            "только если игрок онлайн в публичном сервере. "
-            "Для полной истории серверов нужен BattleMetrics."
-        )
-
     # ─── Собираем сообщение ───
     msg = (
         f"🎮 <b>Серверы: {name}</b>\n"
         f"{'═' * 22}\n\n"
         f"{current_text}"
-        f"{recent_text}"
-        f"{tip_text}\n\n"
+        f"{recent_text}\n\n"
         f"💡 IP сервера: <code>/server ip:port</code>\n"
         f"👥 Игроки: <code>/players ip:port</code>"
     )
