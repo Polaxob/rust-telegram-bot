@@ -249,7 +249,8 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
-         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}")]
+         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}"),
+         InlineKeyboardButton("🎮 Серверы", callback_data=f"servers:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -339,7 +340,8 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
-         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}")]
+         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}"),
+         InlineKeyboardButton("🎮 Серверы", callback_data=f"servers:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -500,6 +502,112 @@ async def callback_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ────────────────────────────────────────────
+#  Callback: Серверы игрока
+# ────────────────────────────────────────────
+
+async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Загружаю данные о серверах...")
+
+    data = query.data.split(":", 2)
+    steam_id = data[1]
+    user_input = data[2] if len(data) > 2 else steam_id
+
+    # Получаем данные игрока
+    summary = await steam_api.get_player_summary(steam_id)
+    if not summary:
+        await query.edit_message_text("❌ Не удалось загрузить данные.")
+        return
+
+    name = summary.get("personaname", "Неизвестно")
+    persona_state = summary.get("personastate", 0)
+    game_id = summary.get("gameid", 0)
+    game_server_ip = summary.get("gameserverip", "")
+    game_extra = summary.get("gameextrainfo", "")
+
+    # Недавние игры
+    recent = await steam_api.get_recent_games(steam_id)
+
+    # ─── Текущий сервер ───
+    current_text = ""
+    if persona_state == 6 and game_server_ip:
+        # Игрок онлайн и есть IP сервера — запрашиваем через A2S
+        import a2s_query
+        loop = asyncio.get_event_loop()
+        server_info = await loop.run_in_executor(None, a2s_query.query_server, game_server_ip)
+        if server_info:
+            current_text = (
+                f"🟢 <b>Текущий сервер:</b>\n"
+                f"  📛 {server_info['name']}\n"
+                f"  👥 {server_info['players']}/{server_info['max_players']}\n"
+                f"  🗺 {server_info['map']}\n"
+                f"  🌐 <code>{game_server_ip}</code>"
+            )
+        else:
+            current_text = (
+                f"🟢 <b>Текущий сервер:</b>\n"
+                f"  🌐 <code>{game_server_ip}</code>\n"
+                f"  ⏳ Не удалось получить инфо (сервер может быть закрыт)"
+            )
+    elif persona_state == 6 and game_id == config.RUST_APP_ID:
+        current_text = (
+            f"🟢 <b>Сейчас играет в Rust</b>\n"
+            f"  ⚠️ IP сервера скрыт (приватный сервер)"
+        )
+    elif persona_state == 6 and game_id:
+        current_text = (
+            f"🎮 <b>Сейчас в другой игре</b>\n"
+            f"  📛 {game_extra or 'Неизвестно'}"
+        )
+    else:
+        state = PERSONA_STATES.get(persona_state, "Оффлайн")
+        current_text = f"🔴 <b>{state}</b> — сейчас не в игре"
+
+    # ─── Недавние серверы (из recently played) ───
+    recent_text = ""
+    if isinstance(recent, list) and recent:
+        lines = []
+        for g in recent[:7]:
+            name_game = g.get("name", "?")
+            mins = g.get("playtime_2weeks", 0)
+            total = g.get("playtime_forever", 0)
+            if mins > 0:
+                lines.append(
+                    f"  • <b>{name_game}</b>\n"
+                    f"    📅 За 2 недели: {format_playtime(mins)}  |  🕐 Всего: {format_playtime(total)}"
+                )
+        if lines:
+            recent_text = "\n\n📅 <b>Активность за 2 недели:</b>\n" + "\n".join(lines)
+
+    # ─── Подсказка ───
+    tip_text = ""
+    if not current_text.startswith("🟢"):
+        tip_text = (
+            "\n\n💡 <b>Совет:</b> Steam показывает IP сервера "
+            "только если игрок онлайн в публичном сервере. "
+            "Для полной истории серверов нужен BattleMetrics."
+        )
+
+    # ─── Собираем сообщение ───
+    msg = (
+        f"🎮 <b>Серверы: {name}</b>\n"
+        f"{'═' * 22}\n\n"
+        f"{current_text}"
+        f"{recent_text}"
+        f"{tip_text}\n\n"
+        f"💡 IP сервера: <code>/server ip:port</code>\n"
+        f"👥 Игроки: <code>/players ip:port</code>"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"refresh:{steam_id}:{user_input}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True)
+
+
+# ────────────────────────────────────────────
 #  Команда /server
 # ────────────────────────────────────────────
 
@@ -601,6 +709,7 @@ def main():
     app.add_handler(CommandHandler("players", cmd_players))
     app.add_handler(CallbackQueryHandler(callback_refresh, pattern=r"^refresh:"))
     app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
+    app.add_handler(CallbackQueryHandler(callback_servers, pattern=r"^servers:"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
