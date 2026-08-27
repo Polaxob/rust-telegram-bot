@@ -193,9 +193,11 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game_extra = summary.get("gameextrainfo", "")
     game_name = summary.get("gamename", "")
 
+    # Определяем Rust: gameid ИЛИ gameextrainfo содержит "Rust"
+    is_rust = game_id == config.RUST_APP_ID or "rust" in game_extra.lower()
+
     if game_id:
-        # Есть gameid = игрок точно в игре
-        if game_id == config.RUST_APP_ID:
+        if is_rust:
             in_rust = True
             game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
         elif game_extra:
@@ -205,12 +207,9 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             game_text = "\n🎮 Сейчас играет"
 
-    # Rust-онлайн
-    rust_status = "🟢 Да — в сети" if in_rust else "🔴 Нет"
-
-    # Последний вход (последняя активность в Steam)
+    # Последний вход — показываем только если оффлайн
     last_seen = ""
-    if last_logoff:
+    if persona_state == 0 and last_logoff:
         dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
         ago = time_ago(dt.isoformat())
         last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
@@ -240,8 +239,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 <code>{steam_id}</code>\n"
         f"{'🌍 ' + country_emoji + ' ' + country if country else ''}\n"
         f"📊 Статус: <b>{state_text}</b>"
-        f"{game_text}\n"
-        f"🟠 <b>В сети в Rust:</b> {rust_status}"
+        f"{game_text}"
         f"{last_seen}\n\n"
         f"⏱ <b>Общее время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
@@ -251,7 +249,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
          InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}"),
-         InlineKeyboardButton("🎮 Серверы", callback_data=f"servers:{steam_id}:{user_input}")]
+         InlineKeyboardButton("🎮 Игры", callback_data=f"servers:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -284,7 +282,7 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_logoff = summary.get("lastlogoff")
 
     last_seen = ""
-    if last_logoff:
+    if persona_state == 0 and last_logoff:
         dt = datetime.fromtimestamp(last_logoff, tz=timezone.utc)
         ago = time_ago(dt.isoformat())
         last_seen = f"\n🕐 Последняя активность в Steam: {ago}"
@@ -316,8 +314,9 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     in_rust = False
     game_id = summary.get("gameid", 0)
     game_extra = summary.get("gameextrainfo", "")
+    is_rust = game_id == config.RUST_APP_ID or "rust" in game_extra.lower()
     if game_id:
-        if game_id == config.RUST_APP_ID:
+        if is_rust:
             in_rust = True
             game_text = "\n🟢 <b>Сейчас играет в Rust</b>"
         elif game_extra:
@@ -325,14 +324,11 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             game_text = "\n🎮 Сейчас играет"
 
-    rust_status = "🟢 Да — в сети" if in_rust else "🔴 Нет"
-
     msg = (
         f"{'🟢' if persona_state > 0 else '🔴'} <b>{name}</b>\n\n"
         f"🆔 <code>{steam_id}</code>\n"
         f"📊 Статус: <b>{state_text}</b>"
-        f"{game_text}\n"
-        f"🟠 <b>В сети в Rust:</b> {rust_status}"
+        f"{game_text}"
         f"{last_seen}\n\n"
         f"⏱ <b>Общее время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
@@ -342,7 +338,7 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
          InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}"),
-         InlineKeyboardButton("🎮 Серверы", callback_data=f"servers:{steam_id}:{user_input}")]
+         InlineKeyboardButton("🎮 Игры", callback_data=f"servers:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -550,7 +546,7 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  🌐 <code>{game_server_ip}</code>\n"
                 f"  ⏳ Не удалось получить инфо (сервер может быть закрыт)"
             )
-    elif game_id == config.RUST_APP_ID:
+    elif game_id == config.RUST_APP_ID or "rust" in game_extra.lower():
         current_text = (
             f"🟢 <b>Сейчас играет в Rust</b>\n"
             f"  ⚠️ IP сервера скрыт (приватный сервер)"
@@ -585,7 +581,7 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ─── Собираем сообщение ───
     msg = (
-        f"🎮 <b>Серверы: {name}</b>\n"
+        f"🎮 <b>Игры: {name}</b>\n"
         f"{'═' * 22}\n\n"
         f"{current_text}"
         f"{recent_text}\n\n"
