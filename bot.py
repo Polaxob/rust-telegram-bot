@@ -35,17 +35,22 @@ PERSONA_STATES = {
 
 
 def format_playtime(minutes: int | None) -> str:
+    """Конвертация минут в читаемый формат: часы и минуты."""
     if minutes is None:
         return "Н/Д"
     hours = minutes // 60
     mins = minutes % 60
-    if hours >= 1000:
+    if hours >= 24:
         days = hours // 24
         h = hours % 24
-        return f"~{days}д {h}ч"
+        if mins > 0:
+            return f"{days} дн {h} ч {mins} мин"
+        return f"{days} дн {h} ч"
     if hours > 0:
-        return f"{hours}ч {mins}м"
-    return f"{mins}м"
+        if mins > 0:
+            return f"{hours} ч {mins} мин"
+        return f"{hours} ч"
+    return f"{mins} мин"
 
 
 def format_duration(seconds: float) -> str:
@@ -172,14 +177,14 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_private = visibility in (1, 2)
 
     # Часы в Rust
-    rust_hours = "🔒 Приватный профиль"
+    rust_hours = "🔒 Профиль приватный — данные скрыты"
     if not is_private and isinstance(games, list):
         for game in games:
             if game.get("appid") == config.RUST_APP_ID:
                 rust_hours = format_playtime(game.get("playtime_forever"))
                 break
         else:
-            rust_hours = "Не найдено"
+            rust_hours = "Игра не найдена в библиотеке"
 
     # Текущая игра
     game_text = ""
@@ -225,7 +230,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Статус: <b>{state_text}</b>"
         f"{game_text}"
         f"{last_seen}\n\n"
-        f"🎮 <b>Rust:</b> {rust_hours}"
+        f"⏱ <b>Время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
         f"🔗 <a href=\"{profile_url}\">Открыть профиль в Steam</a>"
     )
@@ -268,7 +273,7 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_seen = f"\n🕐 Последний вход: {time_ago(datetime.fromtimestamp(last_logoff, tz=timezone.utc).isoformat())}"
 
     games = await steam_api.get_owned_games(steam_id)
-    rust_hours = "🔒 Приватный профиль"
+    rust_hours = "🔒 Профиль приватный — данные скрыты"
     visibility = summary.get("communityvisibilitystate", 1)
     is_private = visibility in (1, 2)
     if not is_private and isinstance(games, list):
@@ -277,7 +282,7 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rust_hours = format_playtime(game.get("playtime_forever"))
                 break
         else:
-            rust_hours = "Не найдено"
+            rust_hours = "Игра не найдена в библиотеке"
 
     bans = await steam_api.get_player_bans(steam_id)
     ban_text = ""
@@ -304,7 +309,7 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Статус: <b>{state_text}</b>"
         f"{game_text}"
         f"{last_seen}\n\n"
-        f"🎮 <b>Rust:</b> {rust_hours}"
+        f"⏱ <b>Время в Rust:</b> {rust_hours}"
         f"{ban_text}\n\n"
         f"🔗 <a href=\"{profile_url}\">Открыть профиль в Steam</a>"
     )
