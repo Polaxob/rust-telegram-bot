@@ -248,7 +248,8 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}")]
+        [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
+         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -337,7 +338,161 @@ async def callback_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}")]
+        [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh:{steam_id}:{user_input}"),
+         InlineKeyboardButton("📊 Статистика", callback_data=f"stats:{steam_id}:{user_input}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview=True)
+
+
+# ────────────────────────────────────────────
+#  Callback: Статистика игрока
+# ────────────────────────────────────────────
+
+async def callback_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Загружаю статистику...")
+
+    data = query.data.split(":", 2)
+    steam_id = data[1]
+    user_input = data[2] if len(data) > 2 else steam_id
+
+    # Параллельно запрашиваем всё
+    summary_task = steam_api.get_player_summary(steam_id)
+    games_task = steam_api.get_owned_games(steam_id)
+    bans_task = steam_api.get_player_bans(steam_id)
+    level_task = steam_api.get_steam_level(steam_id)
+    friends_task = steam_api.get_friend_count(steam_id)
+    recent_task = steam_api.get_recent_games(steam_id)
+
+    summary, games, bans, level, friends, recent = await asyncio.gather(
+        summary_task, games_task, bans_task, level_task, friends_task, recent_task,
+        return_exceptions=True,
+    )
+
+    if isinstance(summary, Exception) or summary is None:
+        await query.edit_message_text("❌ Не удалось загрузить статистику.")
+        return
+
+    name = summary.get("personaname", "Неизвестно")
+    profile_url = summary.get("profileurl", "")
+    visibility = summary.get("communityvisibilitystate", 1)
+    is_private = visibility in (1, 2)
+    created = summary.get("timecreated")
+
+    # ─── Уровень Steam ───
+    steam_level = "🔒 скрыт"
+    if not isinstance(level, Exception) and level:
+        steam_level = str(level.get("player_level", "?"))
+
+    # ─── Количество друзей ───
+    friend_count = "🔒 скрыт"
+    if friends is not None and not isinstance(friends, Exception):
+        friend_count = str(friends)
+
+    # ─── Игры и общее время ───
+    total_games = 0
+    total_hours = 0
+    rust_hours = "🔒 скрыт"
+    top_games = []
+
+    if not is_private and isinstance(games, list):
+        total_games = len(games)
+        for g in games:
+            mins = g.get("playtime_forever", 0)
+            total_hours += mins
+            if g.get("appid") == config.RUST_APP_ID:
+                rust_hours = format_playtime(mins)
+
+        # Топ-5 по времени
+        sorted_games = sorted(games, key=lambda x: x.get("playtime_forever", 0), reverse=True)
+        for g in sorted_games[:5]:
+            mins = g.get("playtime_forever", 0)
+            if mins > 0:
+                top_games.append(f"  • {g.get('name', '?')} — {format_playtime(mins)}")
+
+    total_hours_str = format_playtime(total_hours) if total_hours > 0 else "н/д"
+
+    # ─── Последние 2 недели ───
+    recent_text = ""
+    if isinstance(recent, list) and recent:
+        recent_lines = []
+        for g in recent[:5]:
+            mins = g.get("playtime_forever", 0)
+            recent_2weeks = g.get("playtime_2weeks", 0)
+            if recent_2weeks > 0:
+                recent_lines.append(f"  • {g.get('name', '?')} — {format_playtime(recent_2weeks)}")
+        if recent_lines:
+            recent_text = "\n\n📅 <b>За последние 2 недели:</b>\n" + "\n".join(recent_lines)
+
+    # ─── Баны ───
+    ban_summary = ""
+    if isinstance(bans, dict):
+        vac = bans.get("VACBanned", False)
+        game_bans = bans.get("NumberOfGameBans", 0)
+        days_since = bans.get("DaysSinceLastBan", 0)
+        if vac or game_bans > 0:
+            ban_parts = []
+            if vac:
+                ban_parts.append("VAC-бан")
+            if game_bans > 0:
+                ban_parts.append(f"{game_bans} игр. бан(ов)")
+            ban_summary = f"⚠️ {' + '.join(ban_parts)}"
+            if days_since > 0:
+                ban_summary += f" ({days_since} дн. назад)"
+        else:
+            ban_summary = "✅ Чисто"
+
+    # ─── Дата регистрации ───
+    account_age = ""
+    if created and not is_private:
+        try:
+            dt = datetime.fromtimestamp(created, tz=timezone.utc)
+            account_age = f"\n🎂 Аккаунт создан: {dt.strftime('%d.%m.%Y')}"
+        except Exception:
+            pass
+
+    # ─── Топ-игры ───
+    top_text = ""
+    if top_games:
+        top_text = "\n🏆 <b>Топ-5 игр:</b>\n" + "\n".join(top_games)
+
+    # ─── Блок банов (подробно) ───
+    ban_detail = ""
+    if isinstance(bans, dict):
+        comm_ban = bans.get("CommunityBanned", False)
+        trade_ban = bans.get("EconomyBanned", False)
+        if comm_ban or trade_ban:
+            extras = []
+            if comm_ban:
+                extras.append("社区 бан")
+            if trade_ban:
+                extras.append("Торговый бан")
+            ban_detail = f"\n🚫 Дополнительно: {', '.join(extras)}"
+
+    # ─── Собираем сообщение ───
+    msg = (
+        f"📊 <b>Статистика: {name}</b>\n"
+        f"{'═' * 22}\n\n"
+        f"🎮 <b>Steam</b>\n"
+        f"  ⭐ Уровень: {steam_level}\n"
+        f"  👥 Друзья: {friend_count}\n"
+        f"  📚 Игр в библиотеке: {total_games}"
+        f"{account_age}\n\n"
+        f"⏱ <b>Время в играх</b>\n"
+        f"  🕐 Общее время: {total_hours_str}\n"
+        f"  🟠 Время в Rust: {rust_hours}"
+        f"{top_text}"
+        f"{recent_text}\n\n"
+        f"🛡 <b>Безопасность</b>\n"
+        f"  {ban_summary}"
+        f"{ban_detail}\n\n"
+        f"🔗 <a href=\"{profile_url}\">Открыть профиль в Steam</a>"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"refresh:{steam_id}:{user_input}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -445,6 +600,7 @@ def main():
     app.add_handler(CommandHandler("server", cmd_server))
     app.add_handler(CommandHandler("players", cmd_players))
     app.add_handler(CallbackQueryHandler(callback_refresh, pattern=r"^refresh:"))
+    app.add_handler(CallbackQueryHandler(callback_stats, pattern=r"^stats:"))
 
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -93,3 +93,49 @@ async def resolve_input_to_steam_id(user_input: str) -> str | None:
 
     # Если это просто ник / кастомный URL без полного пути
     return await resolve_vanity_url(user_input)
+
+
+async def get_steam_level(steam_id: str) -> dict | None:
+    """Получить уровень Steam-аккаунта."""
+    url = "https://api.steampowered.com/IPlayerService/GetSteamLevel/v1/"
+    params = {
+        "key": config.STEAM_API_KEY,
+        "steamid": steam_id,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            return data.get("response", {})
+
+
+async def get_friend_count(steam_id: str) -> int | None:
+    """Получить количество друзей."""
+    url = "https://api.steampowered.com/ISteamUser/GetFriendList/v1/"
+    params = {
+        "key": config.STEAM_API_KEY,
+        "steamid": steam_id,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            friends = data.get("friendslist", {}).get("friends", [])
+            return len(friends)
+
+
+async def get_recent_games(steam_id: str) -> list[dict]:
+    """Получить недавно запущенные игры (за 2 недели)."""
+    url = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/"
+    params = {
+        "key": config.STEAM_API_KEY,
+        "steamid": steam_id,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            return data.get("response", {}).get("games", [])
