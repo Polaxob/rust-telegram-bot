@@ -148,7 +148,7 @@ def _parse_players(data: bytes) -> list[dict] | None:
         return None
 
     try:
-        pos = 5 + 1  # header + response type
+        pos = 5  # header(4) + response type(1)
         num_players = data[pos]; pos += 1
         result = []
         for _ in range(num_players):

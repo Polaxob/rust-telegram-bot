@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 import aiohttp
@@ -75,8 +76,18 @@ def time_ago(timestamp_str: str) -> str:
         return "н/д"
 
 
+# Кэш найденных веб-карт: "ip:port" -> (timestamp, url|None), живёт 10 минут
+_MAP_URL_CACHE: dict = {}
+
+
 async def find_server_map_url(ip: str, port: int) -> str | None:
-    """Поиск ссылки на живую карту Rust-сервера (Leaf webmap и популярные порты)."""
+    """Поиск ссылки на живую карту Rust-сервера (Leaf webmap и популярные порты).
+    Проверяет все кандидаты параллельно, результат кэшируется на 10 минут."""
+    key = f"{ip}:{port}"
+    cached = _MAP_URL_CACHE.get(key)
+    if cached and time.time() - cached[0] < 600:
+        return cached[1]
+
     candidates = [
         f"http://{ip}:8081/",          # Leaf webmap по умолчанию
         f"http://{ip}:8080/",          # запасной
@@ -84,15 +95,21 @@ async def find_server_map_url(ip: str, port: int) -> str | None:
         f"http://{ip}:{port + 1}/",    # на один больше игрового
         f"https://{ip}:8081/",
     ]
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
-        for url in candidates:
-            try:
+
+    async def _check(url: str) -> str | None:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as session:
                 async with session.get(url, ssl=False, allow_redirects=True) as resp:
                     if resp.status == 200:
                         return url
-            except Exception:
-                continue
-    return None
+        except Exception:
+            pass
+        return None
+
+    results = await asyncio.gather(*[_check(u) for u in candidates])
+    found = next((u for u in results if u), None)
+    _MAP_URL_CACHE[key] = (time.time(), found)
+    return found
 
 
 # ────────────────────────────────────────────
@@ -124,7 +141,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "❓ <b>Как пользоваться</b>\n\n"
         "🔹 <b>Профиль игрока:</b>\n"
-        "<code>/profile nickname</code> — по нику (кастомная ссылка)\n"
+        "<code>/profile nickname</code> — найти по нику\n"
         "<code>/profile 76561198012345678</code> — по SteamID\n"
         "<code>/profile steamcommunity.com/id/nickname</code> — по ссылке\n\n"
         "Покажет: аватар, имя, онлайн/оффлайн, часы в Rust, баны, страну.\n\n"
@@ -158,13 +175,24 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = " ".join(context.args)
     await update.message.chat.send_action("typing")
 
+    # 1) Пробуем резолвить как SteamID / кастомную ссылку
     steam_id = await steam_api.resolve_input_to_steam_id(user_input)
+
+    # 2) Если не получилось — ищем по нику, открываем лучшего игрока сразу
     if not steam_id:
-        await update.message.reply_text(
-            f"❌ Не удалось найти игрока «{user_input}».\n"
-            "Проверь правильность ввода.",
-        )
-        return
+        players = await steam_api.search_players(user_input, limit=5)
+        if players:
+            want = user_input.lower()
+            exact = next((p for p in players if p["name"].lower() == want), None)
+            steam_id = (exact or players[0])["steam_id"]
+            logger.info("Поиск по нику «%s»: найден %s", user_input, steam_id)
+        else:
+            await update.message.reply_text(
+                f"❌ Не удалось найти игрока «{user_input}».\n"
+                "Проверь правильность ввода или пришли ссылку на профиль:\n"
+                "<code>/profile steamcommunity.com/id/твой_ник</code>",
+            )
+            return
 
     msg, reply_markup = await _build_profile_message(steam_id, user_input)
     if msg is None:
