@@ -533,8 +533,8 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ─── Текущий сервер ───
     current_text = ""
-    if game_server_ip:
-        # Есть IP сервера — запрашиваем через A2S
+    if game_id and game_server_ip:
+        # Игрок в игре И есть IP — запрашиваем через A2S
         import a2s_query
         loop = asyncio.get_event_loop()
         server_info = await loop.run_in_executor(None, a2s_query.query_server, game_server_ip)
@@ -548,26 +548,23 @@ async def callback_servers(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             current_text = (
-                f"🟢 <b>Текущий сервер:</b>\n"
-                f"  🌐 <code>{game_server_ip}</code>\n"
-                f"  ⏳ Не удалось получить инфо (сервер может быть закрыт)"
+                f"🟢 <b>Сейчас на сервере</b>\n"
+                f"  🌐 <code>{game_server_ip}</code>"
             )
-    elif game_id == config.RUST_APP_ID or "rust" in game_extra.lower():
+    elif game_id and (game_id == config.RUST_APP_ID or "rust" in game_extra.lower()):
         current_text = (
             f"🟢 <b>Сейчас играет в Rust</b>\n"
-            f"  ⚠️ IP сервера скрыт (приватный сервер)"
+            f"  ⚠️ Адрес сервера неизвестен"
         )
     elif game_id:
         current_text = (
             f"🎮 <b>Сейчас в другой игре</b>\n"
             f"  📛 {game_extra or 'Неизвестно'}"
         )
+    elif persona_state > 0:
+        current_text = "🟢 <b>В сети</b> — сейчас не в игре"
     else:
-        state = PERSONA_STATES.get(persona_state, "Оффлайн")
-        if persona_state > 0:
-            current_text = f"🟢 <b>{state}</b> — сейчас не в игре"
-        else:
-            current_text = f"🔴 <b>{state}</b> — сейчас не в игре"
+        current_text = "🔴 <b>Оффлайн</b>"
 
     # ─── Недавние серверы (из recently played) ───
     recent_text = ""
