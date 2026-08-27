@@ -992,7 +992,7 @@ async def handle_support_message(update: Update, context: ContextTypes.DEFAULT_T
         delivered_id = sent.message_id
     if delivered_id:
         _owner_reply_map[delivered_id] = chat_id
-    await update.message.reply_text("✅ Отправлено разработчику. Жди ответа здесь.")
+    await update.message.reply_text("✅ Отправлено разработчику.")
 
 
 async def handle_owner_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
